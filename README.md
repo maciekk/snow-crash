@@ -2,6 +2,8 @@
 
 A cyberpunk-themed terminal chat client for [Ollama](https://ollama.com).
 
+![Snow Crash screenshot](screenshot.png)
+
 ## Prerequisites
 
 - [Ollama](https://ollama.com) installed and running locally
