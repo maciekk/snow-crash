@@ -12,6 +12,7 @@ import re
 import time
 
 import ollama
+from pylatexenc.latex2text import LatexNodes2Text
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, ScrollableContainer, Vertical
@@ -76,6 +77,39 @@ class UserBubble(Widget):
     def compose(self) -> ComposeResult:
         yield Static("you", classes="heading")
         yield Static(self._text, markup=False, classes="body")
+
+
+# ── LaTeX → Unicode conversion ───────────────────────────────────────────────
+
+_latex_converter = LatexNodes2Text()
+_CODE_BLOCK_RE = re.compile(r'```[\s\S]*?```|`[^`\n]+`')
+_DISPLAY_MATH_RE = re.compile(r'\$\$(.+?)\$\$', re.DOTALL)
+_INLINE_MATH_RE = re.compile(r'\$([^\$\n]+?)\$')
+
+
+def _safe_latex(expr: str) -> str:
+    try:
+        return _latex_converter.latex_to_text(expr)
+    except Exception:
+        return f"${expr}$"
+
+
+def _convert_latex(text: str) -> str:
+    """Replace LaTeX math expressions with Unicode, leaving code blocks intact."""
+    parts: list[str] = []
+    last = 0
+    for m in _CODE_BLOCK_RE.finditer(text):
+        seg = text[last:m.start()]
+        seg = _DISPLAY_MATH_RE.sub(lambda x: _safe_latex(x.group(1)), seg)
+        seg = _INLINE_MATH_RE.sub(lambda x: _safe_latex(x.group(1)), seg)
+        parts.append(seg)
+        parts.append(m.group(0))
+        last = m.end()
+    seg = text[last:]
+    seg = _DISPLAY_MATH_RE.sub(lambda x: _safe_latex(x.group(1)), seg)
+    seg = _INLINE_MATH_RE.sub(lambda x: _safe_latex(x.group(1)), seg)
+    parts.append(seg)
+    return "".join(parts)
 
 
 # ── Collapsible Markdown sections ────────────────────────────────────────────
@@ -260,7 +294,7 @@ class AssistantBubble(Widget):
                 # Capture scroll position BEFORE layout changes so we know
                 # whether the user was at the bottom prior to new content arriving.
                 was_at_bottom = chat_log.max_scroll_y - chat_log.scroll_y <= 3
-                self.query_one(Markdown).update(self._content)
+                self.query_one(Markdown).update(_convert_latex(self._content))
                 self._dirty = False
                 if was_at_bottom:
                     self.call_after_refresh(lambda: chat_log.scroll_end(animate=False))
@@ -281,7 +315,7 @@ class AssistantBubble(Widget):
             self._flush_timer = None
         self._flush()  # render any buffered content before restructuring
         self._stop_spinner()
-        sections = _parse_sections(self._content)
+        sections = _parse_sections(_convert_latex(self._content))
         if not any(level > 0 for level, _, _ in sections):
             return  # No headings — keep the plain Markdown as-is
         self.query_one(Markdown).remove()
