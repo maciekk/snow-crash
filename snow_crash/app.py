@@ -8,8 +8,10 @@ from typing import AsyncIterator
 import asyncio
 import colorsys
 import math
+import os
 import re
 import time
+from pathlib import Path
 
 import ollama
 from pylatexenc.latex2text import LatexNodes2Text
@@ -22,6 +24,10 @@ from textual.theme import Theme
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Footer, Input, Markdown, OptionList, Rule, Static
+
+
+_DATA_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "snow-crash"
+_SYS_PROMPT_FILE = _DATA_DIR / "system_prompt.txt"
 
 
 # ── Cyberpunk theme ───────────────────────────────────────────────────────────
@@ -499,6 +505,17 @@ class SystemPromptBar(Horizontal):
     def value(self) -> str:
         return self.query_one("#sys-input", Input).value
 
+    def set_value(self, text: str) -> None:
+        self.query_one("#sys-input", Input).value = text
+
+    @on(Input.Changed, "#sys-input")
+    def _save_on_change(self, event: Input.Changed) -> None:
+        try:
+            _DATA_DIR.mkdir(parents=True, exist_ok=True)
+            _SYS_PROMPT_FILE.write_text(event.value)
+        except OSError:
+            pass
+
 
 # ── Input bar ─────────────────────────────────────────────────────────────────
 
@@ -668,6 +685,12 @@ class SnowCrashApp(App):
     def on_mount(self) -> None:
         self.register_theme(CYBERPUNK)
         self.theme = "cyberpunk"
+        if _SYS_PROMPT_FILE.exists():
+            saved = _SYS_PROMPT_FILE.read_text()
+            if saved:
+                bar = self.query_one(SystemPromptBar)
+                bar.set_value(saved)
+                bar.display = True
         self.query_one("#chat-input", Input).focus()
 
     # ── Reactive ──────────────────────────────────────────────────────────────
