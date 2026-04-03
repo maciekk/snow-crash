@@ -713,6 +713,42 @@ def _save_chat(history: list[Message], model: str, sys_prompt: str) -> None:
         pass
 
 
+def _purge_ancestor_chats() -> None:
+    """Delete chat files whose messages are a strict prefix of another file with the same slug."""
+    if not _CHATS_DIR.exists():
+        return
+    by_slug: dict[str, list[Path]] = {}
+    for f in sorted(_CHATS_DIR.glob("*.md")):
+        slug = f.stem[16:]  # skip "YYYYMMDD_HHMMSS_"
+        by_slug.setdefault(slug, []).append(f)
+    for paths in by_slug.values():
+        if len(paths) < 2:
+            continue
+        msgs: dict[Path, list[Message]] = {}
+        for p in paths:
+            try:
+                cr = frontmatter.load(str(p))
+                m = _parse_messages(cr.content)
+                if m:
+                    msgs[p] = m
+            except Exception:
+                pass
+        to_delete: set[Path] = set()
+        path_list = list(msgs)
+        for i, p1 in enumerate(path_list):
+            for p2 in path_list[i + 1 :]:
+                m1, m2 = msgs[p1], msgs[p2]
+                if len(m1) <= len(m2) and m2[: len(m1)] == m1:
+                    to_delete.add(p1)
+                elif len(m2) < len(m1) and m1[: len(m2)] == m2:
+                    to_delete.add(p2)
+        for p in to_delete:
+            try:
+                p.unlink()
+            except Exception:
+                pass
+
+
 def _load_chats() -> list[ChatRecord]:
     if not _CHATS_DIR.exists():
         return []
@@ -890,6 +926,7 @@ class SnowCrashApp(App):
                 self.query_one(SystemPromptBar).set_value(saved)
         self.query_one("#chat-input", Input).focus()
         self.set_interval(30, self._autosave)
+        self.run_worker(_purge_ancestor_chats, thread=True)
 
     # ── Reactive ──────────────────────────────────────────────────────────────
 
