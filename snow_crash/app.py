@@ -376,6 +376,49 @@ class TopBar(Horizontal):
         return self.query_one(ModelPicker).selected_model
 
 
+class SystemPromptBar(Horizontal):
+    """Collapsible bar for editing the system prompt (toggled with Ctrl+Y)."""
+
+    DEFAULT_CSS = """
+    SystemPromptBar {
+        height: 3;
+        dock: top;
+        align: left middle;
+        padding: 0 1;
+        background: #0a0a1e;
+        border-top: solid #3a007a;
+        border-bottom: solid #3a007a;
+    }
+    SystemPromptBar #sys-label {
+        width: auto;
+        color: $accent;
+        text-style: bold;
+        margin: 0 1 0 0;
+    }
+    SystemPromptBar Input {
+        width: 1fr;
+        border: none;
+        background: #0a0a1e;
+        color: $foreground;
+        padding: 0;
+    }
+    SystemPromptBar Input:focus {
+        border: none;
+    }
+    SystemPromptBar Input .input--placeholder {
+        color: #443060;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield Static("SYS:", id="sys-label")
+        yield Input(placeholder="System prompt (applied to all messages)…", id="sys-input")
+
+    @property
+    def value(self) -> str:
+        return self.query_one("#sys-input", Input).value
+
+
 # ── Input bar ─────────────────────────────────────────────────────────────────
 
 
@@ -502,6 +545,7 @@ class SnowCrashApp(App):
         ("ctrl+q", "quit", "Quit"),
         ("ctrl+c", "quit", "Quit"),
         ("ctrl+l", "clear_chat", "Clear"),
+        ("ctrl+y", "toggle_system_prompt", "System prompt"),
     ]
 
     busy: reactive[bool] = reactive(False)
@@ -512,6 +556,9 @@ class SnowCrashApp(App):
 
     def compose(self) -> ComposeResult:
         yield TopBar()
+        bar = SystemPromptBar()
+        bar.display = False
+        yield bar
         yield ScrollableContainer(id="chat-log")
         yield InputBar()
         yield Footer()
@@ -548,6 +595,14 @@ class SnowCrashApp(App):
         log = self.query_one("#chat-log", ScrollableContainer)
         log.remove_children()
 
+    def action_toggle_system_prompt(self) -> None:
+        bar = self.query_one(SystemPromptBar)
+        bar.display = not bar.display
+        if bar.display:
+            bar.query_one("#sys-input", Input).focus()
+        else:
+            self.query_one("#chat-input", Input).focus()
+
     # ── Worker ────────────────────────────────────────────────────────────────
 
     def _send_message(self, text: str) -> None:
@@ -573,7 +628,11 @@ class SnowCrashApp(App):
     async def _stream_response(self, model: str, bubble: AssistantBubble) -> None:
         full = ""
         try:
-            messages = [{"role": m.role, "content": m.content} for m in self._history]
+            sys_prompt = self.query_one(SystemPromptBar).value.strip()
+            messages = []
+            if sys_prompt:
+                messages.append({"role": "system", "content": sys_prompt})
+            messages += [{"role": m.role, "content": m.content} for m in self._history]
             async_client = ollama.AsyncClient()
             stream: AsyncIterator = await async_client.chat(
                 model=model,
