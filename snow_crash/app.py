@@ -499,7 +499,7 @@ class SystemPromptBar(Horizontal):
 
     def compose(self) -> ComposeResult:
         yield Static("SYS:", id="sys-label")
-        yield Input(placeholder="System prompt (applied to all messages)…", id="sys-input")
+        yield TextInput(placeholder="System prompt (applied to all messages)…", id="sys-input")
 
     @property
     def value(self) -> str:
@@ -518,6 +518,20 @@ class SystemPromptBar(Horizontal):
 
 
 # ── Input bar ─────────────────────────────────────────────────────────────────
+
+
+class TextInput(Input):
+    """Input that passes Shift+Space and Shift+Backspace through as their unshifted equivalents."""
+
+    async def _on_key(self, event) -> None:
+        if event.key == "shift+space":
+            self.insert_text_at_cursor(" ")
+            event.stop()
+            event.prevent_default()
+        elif event.key == "shift+backspace":
+            self.action_delete_left()
+            event.stop()
+            event.prevent_default()
 
 
 class StrobingPrompt(Static):
@@ -606,7 +620,7 @@ class InputBar(Horizontal):
 
     def compose(self) -> ComposeResult:
         yield StrobingPrompt(">>")
-        yield Input(placeholder="Jack in, interrogate the entity…", id="chat-input")
+        yield TextInput(placeholder="Jack in, interrogate the entity…", id="chat-input")
 
 
 # ── Main app ──────────────────────────────────────────────────────────────────
