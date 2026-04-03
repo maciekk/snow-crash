@@ -204,6 +204,7 @@ class AssistantBubble(Widget):
 
     _FPS = 12
     _HUE_PERIOD = 1.5  # seconds per full rainbow cycle
+    _FLUSH_FPS = 15    # max Markdown re-renders per second while streaming
 
     DEFAULT_CSS = """
     AssistantBubble {
@@ -228,14 +229,16 @@ class AssistantBubble(Widget):
     def __init__(self) -> None:
         super().__init__()
         self._content = ""
-        self._timer = None
+        self._spinner_timer = None
+        self._flush_timer = None
+        self._dirty = False
 
     def compose(self) -> ComposeResult:
         yield Static("AI", classes="heading")
         yield Markdown("")
 
     def on_mount(self) -> None:
-        self._timer = self.set_interval(1 / self._FPS, self._tick)
+        self._spinner_timer = self.set_interval(1 / self._FPS, self._tick)
 
     def _tick(self) -> None:
         hue = (time.monotonic() % self._HUE_PERIOD) / self._HUE_PERIOD
@@ -245,19 +248,38 @@ class AssistantBubble(Widget):
         )
 
     def _stop_spinner(self) -> None:
-        if self._timer is not None:
-            self._timer.stop()
-            self._timer = None
+        if self._spinner_timer is not None:
+            self._spinner_timer.stop()
+            self._spinner_timer = None
         self.query_one(".heading", Static).styles.color = ""
+
+    def _flush(self) -> None:
+        if self._dirty:
+            try:
+                chat_log = self.app.query_one("#chat-log", ScrollableContainer)
+                # Capture scroll position BEFORE layout changes so we know
+                # whether the user was at the bottom prior to new content arriving.
+                was_at_bottom = chat_log.max_scroll_y - chat_log.scroll_y <= 3
+                self.query_one(Markdown).update(self._content)
+                self._dirty = False
+                if was_at_bottom:
+                    self.call_after_refresh(lambda: chat_log.scroll_end(animate=False))
+            except Exception:
+                pass
 
     def append(self, chunk: str) -> None:
         if chunk and not self._content:
             self._stop_spinner()
+            self._flush_timer = self.set_interval(1 / self._FLUSH_FPS, self._flush)
         self._content += chunk
-        self.query_one(Markdown).update(self._content)
+        self._dirty = True
 
     def finish(self) -> None:
         """Replace the streaming Markdown with collapsible sections if headings exist."""
+        if self._flush_timer is not None:
+            self._flush_timer.stop()
+            self._flush_timer = None
+        self._flush()  # render any buffered content before restructuring
         self._stop_spinner()
         sections = _parse_sections(self._content)
         if not any(level > 0 for level, _, _ in sections):
@@ -617,7 +639,6 @@ class SnowCrashApp(App):
     # ── Reactive ──────────────────────────────────────────────────────────────
 
     def watch_busy(self, busy: bool) -> None:
-        self.query_one("#chat-input", Input).disabled = busy
         if not busy:
             self.query_one("#chat-input", Input).focus()
 
@@ -689,7 +710,6 @@ class SnowCrashApp(App):
                 token = chunk.message.content or ""
                 full += token
                 bubble.append(token)
-                self.query_one("#chat-log", ScrollableContainer).scroll_end(animate=False)
         except asyncio.CancelledError:
             pass
         except Exception as exc:
