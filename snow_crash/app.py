@@ -10,8 +10,9 @@ from textual import on, work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, ScrollableContainer
 from textual.reactive import reactive
+from textual.css.query import NoMatches
 from textual.widget import Widget
-from textual.widgets import Button, Footer, Header, Input, Markdown, Select, Static
+from textual.widgets import Footer, Input, Markdown, OptionList, Static
 
 
 # ── Message bubbles ───────────────────────────────────────────────────────────
@@ -76,53 +77,121 @@ class AssistantBubble(Widget):
 # ── Model selector ────────────────────────────────────────────────────────────
 
 
-class ModelBar(Horizontal):
-    """Header bar with model selector."""
+class ModelDropdown(OptionList):
+    """Floating model list spawned by ModelPicker."""
 
     DEFAULT_CSS = """
-    ModelBar {
-        height: 3;
-        align: left middle;
-        padding: 0 2;
-        background: $panel;
-        border-bottom: solid $primary;
+    ModelDropdown {
+        layer: overlay;
+        width: 40;
+        height: auto;
+        max-height: 12;
+        background: $surface;
+        border: solid $accent;
     }
-    ModelBar Static {
+    """
+
+    def __init__(self, models: list[str], on_pick) -> None:
+        super().__init__(*models)
+        self._models = models
+        self._on_pick = on_pick
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        self._on_pick(self._models[event.option_index])
+        self.remove()
+
+    def on_blur(self) -> None:
+        self.remove()
+
+    def key_escape(self) -> None:
+        self.remove()
+
+
+class ModelPicker(Static, can_focus=True):
+    """Single-row label showing the active model; click to open a dropdown."""
+
+    DEFAULT_CSS = """
+    ModelPicker {
         width: auto;
-        margin-right: 1;
-        color: $text-muted;
+        height: 1;
+        padding: 0 1;
+        background: $primary-darken-1;
+        color: $text;
+        content-align: center middle;
     }
-    ModelBar Select {
-        width: 30;
+    ModelPicker:focus {
+        background: $primary-darken-2;
+    }
+    """
+
+    def __init__(self) -> None:
+        super().__init__("")
+        self._models: list[str] = []
+        self._index = 0
+
+    def on_mount(self) -> None:
+        try:
+            self._models = [m.model for m in ollama.list().models]
+        except Exception:
+            self._models = []
+        self._refresh()
+
+    def _refresh(self) -> None:
+        label = self._models[self._index] if self._models else "(no models)"
+        self.update(f"{label} \u25be")
+
+    def on_click(self) -> None:
+        # Toggle: close if already open
+        try:
+            self.app.screen.query_one(ModelDropdown).remove()
+            return
+        except NoMatches:
+            pass
+        if not self._models:
+            return
+        region = self.region
+        dropdown = ModelDropdown(self._models, self._pick)
+        self.app.screen.mount(dropdown)
+        # Right-align with picker, flush below the top bar
+        dropdown.styles.offset = (region.right - 40, region.bottom)
+        dropdown.focus()
+
+    def _pick(self, model: str) -> None:
+        if model in self._models:
+            self._index = self._models.index(model)
+        self._refresh()
+        self.focus()
+
+    @property
+    def selected_model(self) -> str:
+        return self._models[self._index] if self._models else ""
+
+
+class TopBar(Horizontal):
+    """Single-row title bar with model picker in the upper-right corner."""
+
+    DEFAULT_CSS = """
+    TopBar {
+        height: 1;
+        dock: top;
+        background: $primary;
+        align: left middle;
+        padding: 0 1;
+    }
+    TopBar #app-title {
+        width: 1fr;
+        color: $text;
     }
     """
 
     def compose(self) -> ComposeResult:
-        yield Static("Model:")
-        yield Select([], id="model-select", prompt="Loading models…")
-
-    def on_mount(self) -> None:
-        self._load_models()
-
-    def _load_models(self) -> None:
-        try:
-            models = [m.model for m in ollama.list().models]
-        except Exception:
-            models = []
-
-        select: Select = self.query_one("#model-select", Select)
-        if models:
-            options = [(m, m) for m in models]
-            select.set_options(options)
-            select.value = models[0]
-        else:
-            select.set_options([("(no models found)", "")])
+        yield Static("Snow Crash", id="app-title")
+        yield ModelPicker()
 
     @property
     def selected_model(self) -> str:
-        select: Select = self.query_one("#model-select", Select)
-        v = select.value
-        return str(v) if v and v is not Select.BLANK else ""
+        return self.query_one(ModelPicker).selected_model
 
 
 # ── Input bar ─────────────────────────────────────────────────────────────────
@@ -141,17 +210,11 @@ class InputBar(Horizontal):
     }
     InputBar Input {
         width: 1fr;
-        margin-right: 1;
-    }
-    InputBar Button {
-        width: auto;
-        min-width: 8;
     }
     """
 
     def compose(self) -> ComposeResult:
-        yield Input(placeholder="Type a message…", id="chat-input")
-        yield Button("Send", variant="primary", id="send-btn")
+        yield Input(placeholder="Type a message and press Enter…", id="chat-input")
 
 
 # ── Main app ──────────────────────────────────────────────────────────────────
@@ -166,10 +229,10 @@ class Message:
 class SnowCrashApp(App):
     """Ollama TUI chat application."""
 
-    TITLE = "Snow Crash"
-    SUB_TITLE = "Ollama Chat"
-
     CSS = """
+    Screen {
+        layers: base overlay;
+    }
     #chat-log {
         height: 1fr;
         overflow-y: auto;
@@ -189,8 +252,7 @@ class SnowCrashApp(App):
         self._history: list[Message] = []
 
     def compose(self) -> ComposeResult:
-        yield Header()
-        yield ModelBar()
+        yield TopBar()
         yield ScrollableContainer(id="chat-log")
         yield InputBar()
         yield Footer()
@@ -201,14 +263,12 @@ class SnowCrashApp(App):
     # ── Reactive ──────────────────────────────────────────────────────────────
 
     def watch_busy(self, busy: bool) -> None:
-        self.query_one("#send-btn", Button).disabled = busy
         self.query_one("#chat-input", Input).disabled = busy
         if not busy:
             self.query_one("#chat-input", Input).focus()
 
     # ── Events ────────────────────────────────────────────────────────────────
 
-    @on(Button.Pressed, "#send-btn")
     @on(Input.Submitted, "#chat-input")
     def handle_send(self) -> None:
         if self.busy:
@@ -230,7 +290,7 @@ class SnowCrashApp(App):
     # ── Worker ────────────────────────────────────────────────────────────────
 
     def _send_message(self, text: str) -> None:
-        model = self.query_one(ModelBar).selected_model
+        model = self.query_one(TopBar).selected_model
         if not model:
             self.notify("No model selected.", severity="error")
             return
