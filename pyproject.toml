@@ -13,3 +13,6 @@ dependencies = [
 
 [project.scripts]
 snow-crash = "snow_crash.app:main"
+
+[tool.uv]
+package = true
