@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import AsyncIterator
 
+import asyncio
 import colorsys
 import math
 import re
@@ -689,12 +690,17 @@ class SnowCrashApp(App):
                 full += token
                 bubble.append(token)
                 self.query_one("#chat-log", ScrollableContainer).scroll_end(animate=False)
+        except asyncio.CancelledError:
+            pass
         except Exception as exc:
             bubble.append(f"\n\n**Error:** {exc}")
         finally:
-            bubble.finish()
-            self._history.append(Message("assistant", full))
-            self.busy = False
+            try:
+                bubble.finish()
+                self._history.append(Message("assistant", full))
+                self.busy = False
+            except Exception:
+                pass
 
 
 def main() -> None:
