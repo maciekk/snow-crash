@@ -674,20 +674,41 @@ def _parse_messages(body: str) -> list[Message]:
     return result
 
 
+def _chat_slug(history: list[Message]) -> str:
+    first = next((m.content for m in history if m.role == "user"), "")
+    slug = re.sub(r"[^a-z0-9]+", "-", first.lower())[:40].strip("-")
+    return slug or "chat"
+
+
 def _save_chat(history: list[Message], model: str, sys_prompt: str) -> None:
     if not history:
         return
     try:
         _CHATS_DIR.mkdir(parents=True, exist_ok=True)
         now = datetime.now()
+        slug = _chat_slug(history)
         post = frontmatter.Post(
             content=_format_messages(history),
             timestamp=now.isoformat(timespec="seconds"),
             model=model,
             system_prompt=sys_prompt,
         )
-        path = _CHATS_DIR / f"{now:%Y%m%d_%H%M%S}.md"
-        path.write_text(frontmatter.dumps(post))
+        content = frontmatter.dumps(post)
+        path = _CHATS_DIR / f"{now:%Y%m%d_%H%M%S}_{slug}.md"
+        path.write_text(content)
+        if path.stat().st_size != len(content.encode()):
+            raise RuntimeError(f"Chat save failed: size mismatch on {path.name}")
+        # Clean up ancestor files: same slug, messages are a strict prefix of ours
+        for candidate in _CHATS_DIR.glob(f"*_{slug}.md"):
+            if candidate == path:
+                continue
+            try:
+                cr = frontmatter.load(str(candidate))
+                cand_msgs = _parse_messages(cr.content)
+                if cand_msgs and history[:len(cand_msgs)] == cand_msgs:
+                    candidate.unlink()
+            except Exception:
+                pass
     except OSError:
         pass
 
@@ -846,6 +867,7 @@ class SnowCrashApp(App):
     def __init__(self) -> None:
         super().__init__()
         self._history: list[Message] = []
+        self._saved_history_len: int = 0
 
     def compose(self) -> ComposeResult:
         yield TopBar()
@@ -867,12 +889,14 @@ class SnowCrashApp(App):
             if saved:
                 self.query_one(SystemPromptBar).set_value(saved)
         self.query_one("#chat-input", Input).focus()
+        self.set_interval(30, self._autosave)
 
     # ── Reactive ──────────────────────────────────────────────────────────────
 
     def watch_busy(self, busy: bool) -> None:
         if not busy:
             self.query_one("#chat-input", Input).focus()
+            self._autosave()
 
     # ── Events ────────────────────────────────────────────────────────────────
 
@@ -891,6 +915,7 @@ class SnowCrashApp(App):
 
     def action_clear_chat(self) -> None:
         self._history.clear()
+        self._saved_history_len = 0
         log = self.query_one("#chat-log", ScrollableContainer)
         log.remove_children()
 
@@ -905,19 +930,27 @@ class SnowCrashApp(App):
     def action_open_history(self) -> None:
         self.push_screen(ChatBrowserScreen(), self._on_chat_selected)
 
-    def action_quit(self) -> None:
+    def _autosave(self, force: bool = False) -> None:
+        if not force and self.busy:
+            return
+        history = self._history
+        if not history or len(history) == self._saved_history_len:
+            return
         try:
-            _save_chat(
-                self._history,
-                self.query_one(TopBar).selected_model,
-                self.query_one(SystemPromptBar).value,
-            )
-        except Exception:
-            pass
+            model = self.query_one(TopBar).selected_model
+            sys_prompt = self.query_one(SystemPromptBar).value
+            _save_chat(history, model, sys_prompt)
+            self._saved_history_len = len(history)
+        except Exception as e:
+            self.notify(str(e), severity="error", timeout=10)
+
+    def action_quit(self) -> None:
+        self._autosave(force=True)
         self.exit()
 
     def _on_chat_selected(self, record: ChatRecord | None) -> None:
         if record is not None:
+            self._autosave(force=True)
             self._load_chat(record)
 
     def _load_chat(self, record: ChatRecord) -> None:
@@ -932,6 +965,7 @@ class SnowCrashApp(App):
             else:
                 log.mount(AssistantBubble(msg.content))
             self._history.append(msg)
+        self._saved_history_len = len(self._history)
         log.scroll_end(animate=False)
 
     # ── Worker ────────────────────────────────────────────────────────────────
