@@ -13,13 +13,13 @@ import time
 import ollama
 from textual import on, work
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, ScrollableContainer
+from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.theme import Theme
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Footer, Input, Markdown, OptionList, Static
+from textual.widgets import Footer, Input, Markdown, OptionList, Rule, Static
 
 
 # ── Cyberpunk theme ───────────────────────────────────────────────────────────
@@ -506,6 +506,7 @@ class InputBar(Horizontal):
     DEFAULT_CSS = """
     InputBar {
         height: 3;
+        dock: bottom;
         align: left middle;
         padding: 0 1;
         background: $panel;
@@ -550,11 +551,24 @@ class SnowCrashApp(App):
     Screen {
         layers: base overlay;
     }
+    #content-wrapper {
+        width: 100%;
+        height: 1fr;
+        align: center top;
+    }
+    #content-col {
+        width: 100%;
+        max-width: 120;
+        height: 1fr;
+    }
+    #header-rule {
+        color: #007a94;
+        margin: 0;
+    }
     #chat-log {
         height: 1fr;
         overflow-y: auto;
         background: $background;
-        border-top: solid #007a94;
     }
     Footer {
         background: $panel;
@@ -587,7 +601,10 @@ class SnowCrashApp(App):
         bar = SystemPromptBar()
         bar.display = False
         yield bar
-        yield ScrollableContainer(id="chat-log")
+        yield Rule(id="header-rule")
+        with Vertical(id="content-wrapper"):
+            with Vertical(id="content-col"):
+                yield ScrollableContainer(id="chat-log")
         yield InputBar()
         yield Footer()
 
