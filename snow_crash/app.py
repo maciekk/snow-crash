@@ -539,6 +539,10 @@ class SnowCrashApp(App):
     MarkdownHorizontalRule, Rule {
         color: #00ff41;
     }
+    MarkdownBlock .strong {
+        color: #ffd700;
+        text-style: bold;
+    }
     """
 
     BINDINGS = [
