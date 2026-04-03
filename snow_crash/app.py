@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import AsyncIterator
 
 import asyncio
@@ -13,6 +14,7 @@ import re
 import time
 from pathlib import Path
 
+import frontmatter
 import ollama
 from pylatexenc.latex2text import LatexNodes2Text
 from textual import on, work
@@ -20,6 +22,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.css.query import NoMatches
 from textual.reactive import reactive
+from textual.screen import Screen
 from textual.theme import Theme
 from textual.message import Message
 from textual.widget import Widget
@@ -28,6 +31,7 @@ from textual.widgets import Footer, Input, Markdown, OptionList, Rule, Static
 
 _DATA_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "snow-crash"
 _SYS_PROMPT_FILE = _DATA_DIR / "system_prompt.txt"
+_CHATS_DIR = _DATA_DIR / "chats"
 
 
 # ── Cyberpunk theme ───────────────────────────────────────────────────────────
@@ -266,19 +270,22 @@ class AssistantBubble(Widget):
     }
     """
 
-    def __init__(self) -> None:
+    def __init__(self, content: str = "") -> None:
         super().__init__()
-        self._content = ""
+        self._content = content
         self._spinner_timer = None
         self._flush_timer = None
-        self._dirty = False
+        self._dirty = bool(content)
 
     def compose(self) -> ComposeResult:
         yield Static("AI", classes="heading")
         yield Markdown("")
 
     def on_mount(self) -> None:
-        self._spinner_timer = self.set_interval(1 / self._FPS, self._tick)
+        if self._content:
+            self.finish()
+        else:
+            self._spinner_timer = self.set_interval(1 / self._FPS, self._tick)
 
     def _tick(self) -> None:
         hue = (time.monotonic() % self._HUE_PERIOD) / self._HUE_PERIOD
@@ -435,6 +442,11 @@ class ModelPicker(Static, can_focus=True):
     def selected_model(self) -> str:
         return self._models[self._index] if self._models else ""
 
+    def set_model(self, model: str) -> None:
+        if model in self._models:
+            self._index = self._models.index(model)
+            self._refresh()
+
 
 class TopBar(Horizontal):
     """Single-row title bar with model picker in the upper-right corner."""
@@ -461,6 +473,9 @@ class TopBar(Horizontal):
     @property
     def selected_model(self) -> str:
         return self.query_one(ModelPicker).selected_model
+
+    def set_model(self, model: str) -> None:
+        self.query_one(ModelPicker).set_model(model)
 
 
 class SystemPromptBar(Horizontal):
@@ -632,6 +647,159 @@ class Message:
     content: str
 
 
+@dataclass
+class ChatRecord:
+    path: Path
+    timestamp: datetime
+    model: str
+    system_prompt: str
+    messages: list[Message]
+
+
+_MSG_RE = re.compile(r'^\*\*(you|assistant)\*\*: ', re.MULTILINE)
+
+
+def _format_messages(messages: list[Message]) -> str:
+    parts = []
+    for msg in messages:
+        role_str = "you" if msg.role == "user" else "assistant"
+        parts.append(f"**{role_str}**: {msg.content}")
+    return "\n\n".join(parts)
+
+
+def _parse_messages(body: str) -> list[Message]:
+    matches = list(_MSG_RE.finditer(body))
+    result = []
+    for i, m in enumerate(matches):
+        role_str = m.group(1)
+        content_start = m.end()
+        content_end = matches[i + 1].start() if i + 1 < len(matches) else len(body)
+        content = body[content_start:content_end].rstrip("\n")
+        role = "user" if role_str == "you" else "assistant"
+        result.append(Message(role, content))
+    return result
+
+
+def _save_chat(history: list[Message], model: str, sys_prompt: str) -> None:
+    if not history:
+        return
+    try:
+        _CHATS_DIR.mkdir(parents=True, exist_ok=True)
+        now = datetime.now()
+        post = frontmatter.Post(
+            content=_format_messages(history),
+            timestamp=now.isoformat(timespec="seconds"),
+            model=model,
+            system_prompt=sys_prompt,
+        )
+        path = _CHATS_DIR / f"{now:%Y%m%d_%H%M%S}.md"
+        path.write_text(frontmatter.dumps(post))
+    except OSError:
+        pass
+
+
+def _load_chats() -> list[ChatRecord]:
+    if not _CHATS_DIR.exists():
+        return []
+    records = []
+    for path in sorted(_CHATS_DIR.glob("*.md"), reverse=True):
+        try:
+            post = frontmatter.load(str(path))
+            messages = _parse_messages(post.content)
+            ts = datetime.fromisoformat(post["timestamp"])
+            records.append(ChatRecord(
+                path=path,
+                timestamp=ts,
+                model=post.get("model", ""),
+                system_prompt=post.get("system_prompt", ""),
+                messages=messages,
+            ))
+        except Exception:
+            continue
+    return records
+
+
+# ── Chat browser screen ───────────────────────────────────────────────────────
+
+
+class ChatBrowserScreen(Screen):
+    """Full-screen overlay listing saved chat sessions."""
+
+    BINDINGS = [("escape", "cancel", "Back")]
+
+    DEFAULT_CSS = """
+    ChatBrowserScreen {
+        background: $background 80%;
+        align: center middle;
+    }
+    ChatBrowserScreen #browser-panel {
+        width: 90%;
+        max-width: 110;
+        height: 80%;
+        border: heavy $accent;
+        background: $panel;
+    }
+    ChatBrowserScreen #browser-title {
+        background: #002830;
+        color: $primary;
+        text-style: bold;
+        text-align: center;
+        padding: 0 1;
+        height: 1;
+    }
+    ChatBrowserScreen OptionList {
+        background: $panel;
+        border: none;
+        height: 1fr;
+        padding: 0;
+    }
+    ChatBrowserScreen OptionList > .option-list--option-highlighted {
+        color: $accent;
+        text-style: bold;
+    }
+    ChatBrowserScreen #no-chats {
+        color: $foreground;
+        text-align: center;
+        padding: 2;
+    }
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._records: list[ChatRecord] = []
+
+    def compose(self) -> ComposeResult:
+        self._records = _load_chats()
+        with Vertical(id="browser-panel"):
+            yield Static("// CHAT HISTORY //", id="browser-title")
+            if self._records:
+                options = []
+                for r in self._records:
+                    first_user = next(
+                        (m.content for m in r.messages if m.role == "user"), ""
+                    )
+                    preview = first_user[:50].replace("\n", " ")
+                    n = len(r.messages)
+                    options.append(
+                        f"{r.timestamp:%Y-%m-%d %H:%M}  {r.model}  ({n} msgs)  {preview}"
+                    )
+                yield OptionList(*options, id="chat-list")
+            else:
+                yield Static("No saved chats yet.", id="no-chats")
+
+    def on_mount(self) -> None:
+        try:
+            self.query_one(OptionList).focus()
+        except NoMatches:
+            pass
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        self.dismiss(self._records[event.option_index])
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class SnowCrashApp(App):
     """Ollama TUI chat application."""
 
@@ -676,6 +844,7 @@ class SnowCrashApp(App):
         ("ctrl+c", "quit", "Quit"),
         ("ctrl+l", "clear_chat", "Clear"),
         ("ctrl+y", "toggle_system_prompt", "System prompt"),
+        ("ctrl+h", "open_history", "History"),
     ]
 
     busy: reactive[bool] = reactive(False)
@@ -738,6 +907,38 @@ class SnowCrashApp(App):
             bar.query_one("#sys-input", Input).focus()
         else:
             self.query_one("#chat-input", Input).focus()
+
+    def action_open_history(self) -> None:
+        self.push_screen(ChatBrowserScreen(), self._on_chat_selected)
+
+    def action_quit(self) -> None:
+        try:
+            _save_chat(
+                self._history,
+                self.query_one(TopBar).selected_model,
+                self.query_one(SystemPromptBar).value,
+            )
+        except Exception:
+            pass
+        self.exit()
+
+    def _on_chat_selected(self, record: ChatRecord | None) -> None:
+        if record is not None:
+            self._load_chat(record)
+
+    def _load_chat(self, record: ChatRecord) -> None:
+        self._history.clear()
+        log = self.query_one("#chat-log", ScrollableContainer)
+        log.remove_children()
+        self.query_one(SystemPromptBar).set_value(record.system_prompt)
+        self.query_one(TopBar).set_model(record.model)
+        for msg in record.messages:
+            if msg.role == "user":
+                log.mount(UserBubble(msg.content))
+            else:
+                log.mount(AssistantBubble(msg.content))
+            self._history.append(msg)
+        log.scroll_end(animate=False)
 
     # ── Worker ────────────────────────────────────────────────────────────────
 
