@@ -225,7 +225,7 @@ class TopBar(Horizontal):
     TopBar {
         height: 1;
         dock: top;
-        background: $panel;
+        background: #002830;
         align: left middle;
         padding: 0 1;
     }
@@ -320,6 +320,9 @@ class InputBar(Horizontal):
         color: $text;
         padding: 0;
     }
+    InputBar Input .input--placeholder {
+        color: #303840;
+    }
     InputBar Input:hover {
         border: none;
     }
@@ -330,7 +333,7 @@ class InputBar(Horizontal):
 
     def compose(self) -> ComposeResult:
         yield StrobingPrompt(">>")
-        yield Input(placeholder="jack in and type a message…", id="chat-input")
+        yield Input(placeholder="Jack in, interrogate the entity…", id="chat-input")
 
 
 # ── Main app ──────────────────────────────────────────────────────────────────
@@ -353,7 +356,7 @@ class SnowCrashApp(App):
         height: 1fr;
         overflow-y: auto;
         background: $background;
-        border-top: solid #00ff41;
+        border-top: solid #007a94;
     }
     Footer {
         background: $panel;
