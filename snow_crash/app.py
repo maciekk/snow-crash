@@ -9,10 +9,29 @@ import ollama
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, ScrollableContainer
-from textual.reactive import reactive
 from textual.css.query import NoMatches
+from textual.reactive import reactive
+from textual.theme import Theme
 from textual.widget import Widget
 from textual.widgets import Footer, Input, Markdown, OptionList, Static
+
+
+# ── Cyberpunk theme ───────────────────────────────────────────────────────────
+
+CYBERPUNK = Theme(
+    name="cyberpunk",
+    dark=True,
+    primary="#00e5ff",       # neon cyan  — user bubbles, borders, input
+    secondary="#ff0080",     # hot magenta — assistant bubbles
+    accent="#f0006e",        # hot pink — dropdown, footer keys, focused widgets
+    background="#080810",    # near-black with blue cast
+    surface="#0d0d1a",       # slightly lifted surface
+    panel="#0a0a14",         # panel / bars
+    warning="#ffe600",       # neon yellow
+    error="#ff0040",         # neon red
+    success="#00ff41",       # matrix green
+    foreground="#c8f0ff",    # ice-blue text
+)
 
 
 # ── Message bubbles ───────────────────────────────────────────────────────────
@@ -24,8 +43,9 @@ class UserBubble(Static):
     DEFAULT_CSS = """
     UserBubble {
         background: $primary-darken-3;
-        border: tall $primary;
+        border: heavy $primary;
         border-title-color: $primary;
+        border-title-style: bold;
         color: $text;
         margin: 1 2;
         padding: 0 1;
@@ -34,7 +54,7 @@ class UserBubble(Static):
 
     def __init__(self, text: str) -> None:
         super().__init__(text, markup=False)
-        self.border_title = "You"
+        self.border_title = "YOU"
 
 
 class AssistantBubble(Widget):
@@ -43,8 +63,9 @@ class AssistantBubble(Widget):
     DEFAULT_CSS = """
     AssistantBubble {
         background: $surface;
-        border: tall $accent;
-        border-title-color: $accent;
+        border: heavy $secondary;
+        border-title-color: $secondary;
+        border-title-style: bold;
         color: $text;
         margin: 1 2;
         padding: 0 1;
@@ -59,7 +80,7 @@ class AssistantBubble(Widget):
 
     def __init__(self) -> None:
         super().__init__()
-        self.border_title = "Assistant"
+        self.border_title = "AI"
         self._content = ""
 
     def compose(self) -> ComposeResult:
@@ -86,8 +107,12 @@ class ModelDropdown(OptionList):
         width: 40;
         height: auto;
         max-height: 12;
-        background: $surface;
-        border: solid $accent;
+        background: $panel;
+        border: heavy $accent;
+    }
+    ModelDropdown > .option-list--option-highlighted {
+        color: $accent;
+        text-style: bold;
     }
     """
 
@@ -116,12 +141,18 @@ class ModelPicker(Static, can_focus=True):
         width: auto;
         height: 1;
         padding: 0 1;
-        background: $primary-darken-1;
-        color: $text;
+        background: $surface;
+        color: $primary;
         content-align: center middle;
+        text-style: bold;
     }
     ModelPicker:focus {
-        background: $primary-darken-2;
+        background: $panel;
+        color: $accent;
+    }
+    ModelPicker:hover {
+        background: $surface;
+        color: $accent;
     }
     """
 
@@ -175,18 +206,19 @@ class TopBar(Horizontal):
     TopBar {
         height: 1;
         dock: top;
-        background: $primary;
+        background: $panel;
         align: left middle;
         padding: 0 1;
     }
     TopBar #app-title {
         width: 1fr;
-        color: $text;
+        color: $primary;
+        text-style: bold;
     }
     """
 
     def compose(self) -> ComposeResult:
-        yield Static("Snow Crash", id="app-title")
+        yield Static("// SNOW CRASH //", id="app-title")
         yield ModelPicker()
 
     @property
@@ -206,15 +238,21 @@ class InputBar(Horizontal):
         align: left middle;
         padding: 0 1;
         background: $panel;
-        border-top: solid $primary;
+        border-top: heavy #00ff41;
     }
     InputBar Input {
         width: 1fr;
+        border: tall $surface;
+        background: $surface;
+        color: $text;
+    }
+    InputBar Input:focus {
+        border: tall $primary;
     }
     """
 
     def compose(self) -> ComposeResult:
-        yield Input(placeholder="Type a message and press Enter…", id="chat-input")
+        yield Input(placeholder="jack in and type a message…", id="chat-input")
 
 
 # ── Main app ──────────────────────────────────────────────────────────────────
@@ -236,6 +274,15 @@ class SnowCrashApp(App):
     #chat-log {
         height: 1fr;
         overflow-y: auto;
+        background: $background;
+        border-top: solid #00ff41;
+    }
+    Footer {
+        background: $panel;
+        color: $primary;
+    }
+    MarkdownHorizontalRule, Rule {
+        color: #00ff41;
     }
     """
 
@@ -258,6 +305,8 @@ class SnowCrashApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
+        self.register_theme(CYBERPUNK)
+        self.theme = "cyberpunk"
         self.query_one("#chat-input", Input).focus()
 
     # ── Reactive ──────────────────────────────────────────────────────────────
