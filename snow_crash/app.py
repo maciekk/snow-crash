@@ -303,14 +303,8 @@ class AssistantBubble(Widget):
     def _flush(self) -> None:
         if self._dirty:
             try:
-                chat_log = self.app.query_one("#chat-log", ScrollableContainer)
-                # Capture scroll position BEFORE layout changes so we know
-                # whether the user was at the bottom prior to new content arriving.
-                was_at_bottom = chat_log.max_scroll_y - chat_log.scroll_y <= 3
                 self.query_one(Markdown).update(_convert_latex(self._content))
                 self._dirty = False
-                if was_at_bottom:
-                    self.call_after_refresh(lambda: chat_log.scroll_end(animate=False))
             except Exception:
                 pass
 
