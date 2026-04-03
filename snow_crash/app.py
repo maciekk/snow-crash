@@ -5,6 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import AsyncIterator
 
+import math
+import time
+
 import ollama
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -37,53 +40,69 @@ CYBERPUNK = Theme(
 # ── Message bubbles ───────────────────────────────────────────────────────────
 
 
-class UserBubble(Static):
-    """A user message bubble."""
+class UserBubble(Widget):
+    """A user message bubble — right-aligned with a cyan right-edge bar."""
 
     DEFAULT_CSS = """
     UserBubble {
-        background: $primary-darken-3;
-        border: heavy $primary;
-        border-title-color: $primary;
-        border-title-style: bold;
-        color: $text;
-        margin: 1 2;
+        background: $background;
+        border-right: heavy $primary;
+        margin: 0 0 1 0;
+        height: auto;
+    }
+    UserBubble .heading {
+        color: $primary;
+        text-style: bold;
+        text-align: right;
         padding: 0 1;
+        background: #1c1c28;
+    }
+    UserBubble .body {
+        color: $text;
+        text-align: right;
+        padding: 0 1;
+        background: #1c1c28;
     }
     """
 
     def __init__(self, text: str) -> None:
-        super().__init__(text, markup=False)
-        self.border_title = "YOU"
+        super().__init__()
+        self._text = text
+
+    def compose(self) -> ComposeResult:
+        yield Static("you", classes="heading")
+        yield Static(self._text, markup=False, classes="body")
 
 
 class AssistantBubble(Widget):
-    """An assistant message bubble that renders Markdown and supports streaming."""
+    """An assistant message bubble — left-aligned with a magenta left-edge bar."""
 
     DEFAULT_CSS = """
     AssistantBubble {
-        background: $surface;
-        border: heavy $secondary;
-        border-title-color: $secondary;
-        border-title-style: bold;
-        color: $text;
-        margin: 1 2;
-        padding: 0 1;
+        background: $background;
+        border-left: heavy $secondary;
+        margin: 0 0 1 0;
         height: auto;
     }
+    AssistantBubble .heading {
+        color: $secondary;
+        text-style: bold;
+        padding: 0 1;
+        background: $background;
+    }
     AssistantBubble Markdown {
-        background: transparent;
-        padding: 0;
+        background: $background;
+        padding: 0 1;
         margin: 0;
     }
     """
 
     def __init__(self) -> None:
         super().__init__()
-        self.border_title = "AI"
         self._content = ""
 
     def compose(self) -> ComposeResult:
+        yield Static("AI", classes="heading")
         yield Markdown("")
 
     def append(self, chunk: str) -> None:
@@ -229,6 +248,60 @@ class TopBar(Horizontal):
 # ── Input bar ─────────────────────────────────────────────────────────────────
 
 
+class StrobingPrompt(Static):
+    """'>>' prompt: snaps to white, fast burn to cyan, lingers, then fades to near-black.
+
+    Phase A  [top 18%] — white → full cyan, fast linear
+    Phase B  [next 22%] — hold at full cyan
+    Phase C  [bottom 60%] — cyan → near-black, quadratic ease-in
+                            (slow departure from cyan, accelerates into dark)
+    """
+
+    DEFAULT_CSS = """
+    StrobingPrompt {
+        width: auto;
+        text-style: bold;
+        margin: 0 1 0 0;
+    }
+    """
+
+    _PERIOD  = 1.875         # seconds per cycle
+    _FPS     = 30
+
+    _A_EDGE  = 0.82          # raw_t boundary: above = Phase A (white→cyan)
+    _B_EDGE  = 0.60          # raw_t boundary: above = Phase B (linger), below = Phase C
+
+    _DARK  = (0,   5,   8)   # near-black with faint cyan ghost
+    _CYAN  = (0, 229, 255)   # full neon cyan  #00e5ff
+    _WHITE = (255, 255, 255)
+
+    def on_mount(self) -> None:
+        self.set_interval(1 / self._FPS, self._strobe)
+
+    def _strobe(self) -> None:
+        raw_t = 1.0 - (time.monotonic() % self._PERIOD) / self._PERIOD
+
+        if raw_t >= self._A_EDGE:
+            # Phase A: white → cyan (fast, linear)
+            local = (raw_t - self._A_EDGE) / (1.0 - self._A_EDGE)
+            lo, hi = self._CYAN, self._WHITE
+            eased = local
+        elif raw_t >= self._B_EDGE:
+            # Phase B: hold at full cyan
+            self.styles.color = "rgb(0,229,255)"
+            return
+        else:
+            # Phase C: cyan → near-black, ease-in (slow at cyan, fast at dark)
+            local = raw_t / self._B_EDGE   # 1.0 at cyan end, 0.0 at dark end
+            eased = 1.0 - (1.0 - local) ** 2
+            lo, hi = self._DARK, self._CYAN
+
+        r = int(lo[0] + (hi[0] - lo[0]) * eased)
+        g = int(lo[1] + (hi[1] - lo[1]) * eased)
+        b = int(lo[2] + (hi[2] - lo[2]) * eased)
+        self.styles.color = f"rgb({r},{g},{b})"
+
+
 class InputBar(Horizontal):
     """Bottom input bar."""
 
@@ -242,16 +315,21 @@ class InputBar(Horizontal):
     }
     InputBar Input {
         width: 1fr;
-        border: tall $surface;
-        background: $surface;
+        border: none;
+        background: $panel;
         color: $text;
+        padding: 0;
+    }
+    InputBar Input:hover {
+        border: none;
     }
     InputBar Input:focus {
-        border: tall $primary;
+        border: none;
     }
     """
 
     def compose(self) -> ComposeResult:
+        yield StrobingPrompt(">>")
         yield Input(placeholder="jack in and type a message…", id="chat-input")
 
 
