@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import AsyncIterator
 
 import math
+import re
 import time
 
 import ollama
@@ -15,6 +16,7 @@ from textual.containers import Horizontal, ScrollableContainer
 from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.theme import Theme
+from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Footer, Input, Markdown, OptionList, Static
 
@@ -74,6 +76,127 @@ class UserBubble(Widget):
         yield Static(self._text, markup=False, classes="body")
 
 
+# ── Collapsible Markdown sections ────────────────────────────────────────────
+
+_HEADING_RE = re.compile(r'^(#{1,6})\s+(.+)$', re.MULTILINE)
+
+
+def _parse_sections(text: str) -> list[tuple[int, str, str]]:
+    """Split Markdown at the minimum heading level found.
+
+    Each section's body extends to the next heading of the *same* level,
+    so sub-headings (###, ####, …) are included in the body and handled
+    recursively when CollapsibleSection composes itself.
+    level=0 means preamble content before the first heading.
+    """
+    matches = list(_HEADING_RE.finditer(text))
+    if not matches:
+        return [(0, "", text)]
+
+    min_level = min(len(m.group(1)) for m in matches)
+    top = [m for m in matches if len(m.group(1)) == min_level]
+
+    sections: list[tuple[int, str, str]] = []
+    if top[0].start() > 0:
+        preamble = text[:top[0].start()].strip()
+        if preamble:
+            sections.append((0, "", preamble))
+    for i, m in enumerate(top):
+        body_start = m.end()
+        body_end = top[i + 1].start() if i + 1 < len(top) else len(text)
+        sections.append((min_level, m.group(2).strip(), text[body_start:body_end].strip()))
+    return sections
+
+
+class SectionHeading(Static):
+    """Clickable heading that signals its parent CollapsibleSection to toggle."""
+
+    class Clicked(Message):
+        pass
+
+    DEFAULT_CSS = """
+    SectionHeading {
+        color: $primary;
+        text-style: bold;
+        padding: 0 1;
+        background: $background;
+    }
+    SectionHeading:hover {
+        color: $accent;
+    }
+    """
+
+    def __init__(self, level: int, text: str) -> None:
+        super().__init__("")
+        self._level = level
+        self._text = text
+
+    def on_mount(self) -> None:
+        self.render_state(collapsed=False)
+
+    def render_state(self, collapsed: bool) -> None:
+        arrow = "\u25b8" if collapsed else "\u25be"
+        self.update(f"{'#' * self._level} {self._text} {arrow}")
+
+    def on_click(self) -> None:
+        self.post_message(self.Clicked())
+
+
+class CollapsibleSection(Widget):
+    """A Markdown section whose body can be hidden by clicking the heading."""
+
+    DEFAULT_CSS = """
+    CollapsibleSection {
+        height: auto;
+        margin: 0;
+    }
+    CollapsibleSection Markdown {
+        background: $background;
+        padding: 0 1;
+        margin: 0;
+    }
+    CollapsibleSection .ellipsis {
+        color: $text-muted;
+        padding: 0 1;
+    }
+    """
+
+    def __init__(self, level: int, heading: str, body: str) -> None:
+        super().__init__()
+        self._level = level
+        self._heading = heading
+        self._body = body
+        self._collapsed = False
+
+    def compose(self) -> ComposeResult:
+        yield SectionHeading(self._level, self._heading)
+        # Recursively render sub-sections if the body contains headings
+        if self._body:
+            sub = _parse_sections(self._body)
+            if any(lv > 0 for lv, _, _ in sub):
+                for lv, hd, bd in sub:
+                    if lv == 0:
+                        yield Markdown(bd)
+                    else:
+                        yield CollapsibleSection(lv, hd, bd)
+            else:
+                yield Markdown(self._body)
+        yield Static("…", classes="ellipsis")
+
+    def on_mount(self) -> None:
+        self.query_one(".ellipsis").display = False
+
+    def on_section_heading_clicked(self, event: SectionHeading.Clicked) -> None:
+        event.stop()
+        self._collapsed = not self._collapsed
+        self.query_one(SectionHeading).render_state(self._collapsed)
+        # Toggle every child except the heading and the ellipsis placeholder
+        for child in self.children:
+            if not isinstance(child, SectionHeading) and not child.has_class("ellipsis"):
+                child.display = not self._collapsed
+        self.query_one(".ellipsis").display = self._collapsed
+
+
 class AssistantBubble(Widget):
     """An assistant message bubble — left-aligned with a magenta left-edge bar."""
 
@@ -110,8 +233,16 @@ class AssistantBubble(Widget):
         self.query_one(Markdown).update(self._content)
 
     def finish(self) -> None:
-        """Called when streaming is complete."""
-        pass
+        """Replace the streaming Markdown with collapsible sections if headings exist."""
+        sections = _parse_sections(self._content)
+        if not any(level > 0 for level, _, _ in sections):
+            return  # No headings — keep the plain Markdown as-is
+        self.query_one(Markdown).remove()
+        for level, heading, body in sections:
+            if level == 0:
+                self.mount(Markdown(body))
+            else:
+                self.mount(CollapsibleSection(level, heading, body))
 
 
 # ── Model selector ────────────────────────────────────────────────────────────
