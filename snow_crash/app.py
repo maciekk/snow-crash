@@ -951,6 +951,7 @@ class SnowCrashApp(App):
     # ── Actions ───────────────────────────────────────────────────────────────
 
     def action_clear_chat(self) -> None:
+        self._autosave(force=True)
         self._history.clear()
         self._saved_history_len = 0
         log = self.query_one("#chat-log", ScrollableContainer)
