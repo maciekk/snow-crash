@@ -688,9 +688,7 @@ class SnowCrashApp(App):
         if _SYS_PROMPT_FILE.exists():
             saved = _SYS_PROMPT_FILE.read_text()
             if saved:
-                bar = self.query_one(SystemPromptBar)
-                bar.set_value(saved)
-                bar.display = True
+                self.query_one(SystemPromptBar).set_value(saved)
         self.query_one("#chat-input", Input).focus()
 
     # ── Reactive ──────────────────────────────────────────────────────────────
