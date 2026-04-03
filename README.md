@@ -40,3 +40,10 @@ uv run snow-crash
 - LaTeX math expressions (`$...$`, `$$...$$`) converted to Unicode on the fly
 - Markdown headings in responses become collapsible sections
 - Cyberpunk color theme with animated `>>` prompt and rainbow heading effect while waiting for responses
+
+### Soon
+
+- [ ] auto-multi-line input line, as needed
+- [ ] search within chat
+- [ ] strip emojis (and other elements of choice) from chat rendering
+- [ ] better in-app editor of system prompts (esp. multi-line)
