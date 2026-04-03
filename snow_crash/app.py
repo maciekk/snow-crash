@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import AsyncIterator
 
+import colorsys
 import math
 import re
 import time
@@ -200,6 +201,9 @@ class CollapsibleSection(Widget):
 class AssistantBubble(Widget):
     """An assistant message bubble — left-aligned with a magenta left-edge bar."""
 
+    _FPS = 12
+    _HUE_PERIOD = 1.5  # seconds per full rainbow cycle
+
     DEFAULT_CSS = """
     AssistantBubble {
         background: $background;
@@ -223,17 +227,37 @@ class AssistantBubble(Widget):
     def __init__(self) -> None:
         super().__init__()
         self._content = ""
+        self._timer = None
 
     def compose(self) -> ComposeResult:
         yield Static("AI", classes="heading")
         yield Markdown("")
 
+    def on_mount(self) -> None:
+        self._timer = self.set_interval(1 / self._FPS, self._tick)
+
+    def _tick(self) -> None:
+        hue = (time.monotonic() % self._HUE_PERIOD) / self._HUE_PERIOD
+        r, g, b = colorsys.hsv_to_rgb(hue, 1.0, 1.0)
+        self.query_one(".heading", Static).styles.color = (
+            f"rgb({int(r * 255)},{int(g * 255)},{int(b * 255)})"
+        )
+
+    def _stop_spinner(self) -> None:
+        if self._timer is not None:
+            self._timer.stop()
+            self._timer = None
+        self.query_one(".heading", Static).styles.color = ""
+
     def append(self, chunk: str) -> None:
+        if chunk and not self._content:
+            self._stop_spinner()
         self._content += chunk
         self.query_one(Markdown).update(self._content)
 
     def finish(self) -> None:
         """Replace the streaming Markdown with collapsible sections if headings exist."""
+        self._stop_spinner()
         sections = _parse_sections(self._content)
         if not any(level > 0 for level, _, _ in sections):
             return  # No headings — keep the plain Markdown as-is
