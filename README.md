@@ -43,7 +43,10 @@ uv run snow-crash
 
 ### Soon
 
-- [ ] auto-multi-line input line, as needed
 - [ ] search within chat
 - [ ] strip emojis (and other elements of choice) from chat rendering
 - [ ] better in-app editor of system prompts (esp. multi-line)
+
+### Done
+
+- [x] auto-multi-line input line, as needed

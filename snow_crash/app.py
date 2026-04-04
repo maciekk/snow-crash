@@ -26,7 +26,7 @@ from textual.screen import Screen
 from textual.theme import Theme
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Footer, Input, Markdown, OptionList, Rule, Static
+from textual.widgets import Footer, Input, Markdown, OptionList, Rule, Static, TextArea
 
 
 _DATA_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "snow-crash"
@@ -543,6 +543,41 @@ class TextInput(Input):
             event.prevent_default()
 
 
+class ChatTextArea(TextArea):
+    """Auto-resizing multi-line input. Enter submits; Shift+Enter inserts newline."""
+
+    SUBMITTED = "submitted"
+
+    class Submitted(Message):
+        def __init__(self, text: str) -> None:
+            super().__init__()
+            self.text = text
+
+    _MAX_LINES = 8
+
+    async def _on_key(self, event) -> None:
+        if event.key == "enter":
+            event.prevent_default()
+            text = self.text.strip()
+            if text:
+                self.post_message(self.Submitted(text))
+                self.clear()
+        elif event.key == "shift+enter":
+            event.prevent_default()
+            self.insert("\n")
+
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        lines = self.text.count("\n") + 1
+        clamped = max(1, min(lines, self._MAX_LINES))
+        # height = content rows + 2 for TextArea border (we use none, so just rows + padding)
+        self.styles.height = clamped
+        # Resize the parent InputBar: 1 padding top + rows + 1 padding bottom + border = rows + 2
+        try:
+            self.parent.styles.height = clamped + 2
+        except Exception:
+            pass
+
+
 class StrobingPrompt(Static):
     """'>>' prompt: snaps to white, fast burn to cyan, lingers, then fades to near-black.
 
@@ -604,32 +639,28 @@ class InputBar(Horizontal):
     InputBar {
         height: 3;
         dock: bottom;
-        align: left middle;
+        align: left top;
         padding: 0 1;
         background: $panel;
         border-top: heavy #00ff41;
     }
-    InputBar Input {
+    InputBar ChatTextArea {
         width: 1fr;
-        border: none;
+        height: 1;
+        border: none !important;
         background: $panel;
         color: $text;
         padding: 0;
+        scrollbar-size: 0 0;
     }
-    InputBar Input .input--placeholder {
-        color: #303840;
-    }
-    InputBar Input:hover {
-        border: none;
-    }
-    InputBar Input:focus {
-        border: none;
+    InputBar ChatTextArea .text-area--cursor-line {
+        background: $panel;
     }
     """
 
     def compose(self) -> ComposeResult:
         yield StrobingPrompt(">>")
-        yield TextInput(placeholder="Jack in, interrogate the entity…", id="chat-input")
+        yield ChatTextArea(id="chat-input", show_line_numbers=False, compact=True)
 
 
 # ── Main app ──────────────────────────────────────────────────────────────────
@@ -924,7 +955,7 @@ class SnowCrashApp(App):
             saved = _SYS_PROMPT_FILE.read_text()
             if saved:
                 self.query_one(SystemPromptBar).set_value(saved)
-        self.query_one("#chat-input", Input).focus()
+        self.query_one("#chat-input", ChatTextArea).focus()
         self.set_interval(30, self._autosave)
         self.run_worker(_purge_ancestor_chats, thread=True)
 
@@ -932,20 +963,18 @@ class SnowCrashApp(App):
 
     def watch_busy(self, busy: bool) -> None:
         if not busy:
-            self.query_one("#chat-input", Input).focus()
+            self.query_one("#chat-input", ChatTextArea).focus()
             self._autosave()
 
     # ── Events ────────────────────────────────────────────────────────────────
 
-    @on(Input.Submitted, "#chat-input")
-    def handle_send(self) -> None:
+    @on(ChatTextArea.Submitted)
+    def handle_send(self, event: ChatTextArea.Submitted) -> None:
         if self.busy:
             return
-        inp = self.query_one("#chat-input", Input)
-        text = inp.value.strip()
+        text = event.text
         if not text:
             return
-        inp.clear()
         self._send_message(text)
 
     # ── Actions ───────────────────────────────────────────────────────────────
@@ -963,7 +992,7 @@ class SnowCrashApp(App):
         if bar.display:
             bar.query_one("#sys-input", Input).focus()
         else:
-            self.query_one("#chat-input", Input).focus()
+            self.query_one("#chat-input", ChatTextArea).focus()
 
     def action_open_history(self) -> None:
         self.push_screen(ChatBrowserScreen(), self._on_chat_selected)
