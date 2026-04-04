@@ -565,6 +565,12 @@ class ChatTextArea(TextArea):
         elif event.key == "shift+enter":
             event.prevent_default()
             self.insert("\n")
+        elif event.key == "shift+space":
+            event.prevent_default()
+            self.insert(" ")
+        elif event.key == "shift+backspace":
+            event.prevent_default()
+            self.action_delete_left()
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         lines = self.text.count("\n") + 1
