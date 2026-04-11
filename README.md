@@ -22,7 +22,8 @@ uv sync
 uv run snow-crash
 ```
 
-> [!TIP] If you want to check out some interesting gemma4 chats, look in
+> [!TIP]
+> If you want to check out some interesting gemma4 chats, look in
 > `sample-chats-gemma4/`. You can just put these into your
 > `~/.local/share/snow-crash/chats/`, load them into the tool with `^h`, and
 > can continue the conversation!
